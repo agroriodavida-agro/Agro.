@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Pluviômetro Pro | Gestão de Chuvas</title>
+    <meta name="theme-color" content="#0d2137">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg:       #07111d;
+            --bg2:      #0d1e30;
+            --bg3:      #102440;
+            --card:     #0f2035;
+            --border:   rgba(56, 139, 211, 0.18);
+            --blue:     #1e90ff;
+            --blue-lt:  #5ab4ff;
+            --teal:     #00d4c8;
+            --rain:     #38bdf8;
+            --gold:     #f0c040;
+            --text:     #d4e8f8;
+            --muted:    #5a7a96;
+            --danger:   #e05a5a;
+            --radius:   18px;
+            --font-display: 'Bebas Neue', sans-serif;
+            --font-body:    'DM Sans', sans-serif;
+            --font-mono:    'JetBrains Mono', monospace;
+        }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+            padding-bottom: 40px;
+        }
+
+        /* ─── BACKGROUND RAIN EFFECT ─── */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(ellipse 80% 60% at 20% -10%, rgba(30,144,255,0.08) 0%, transparent 60%),
+                radial-gradient(ellipse 60% 40% at 80% 110%, rgba(0,212,200,0.06) 0%, transparent 60%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* ─── ANIMATED RAIN DROPS ─── */
+        .rain-canvas {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.08;
+        }
+
+        /* ─── SPLASH ─── */
+        #splash {
+            position: fixed; inset: 0;
+            background: var(--bg);
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            z-index: 9999; gap: 20px;
+        }
+        .splash-logo {
+            font-family: var(--font-display);
+            font-size: 52px;
+            letter-spacing: 4px;
+            color: var(--blue-lt);
+            animation: pulse-glow 2s ease-in-out infinite;
+        }
+        @keyframes pulse-glow {
+            0%,100% { text-shadow: 0 0 20px rgba(90,180,255,0.4); }
+            50%      { text-shadow: 0 0 40px rgba(90,180,255,0.8), 0 0 80px rgba(90,180,255,0.3); }
+        }
+        #splashMsg {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--muted);
+            letter-spacing: 1px;
+        }
+        .splash-bar {
+            width: 200px; height: 2px;
+            background: var(--bg3);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .splash-bar-inner {
+            height: 100%;
+            background: linear-gradient(90deg, var(--blue), var(--teal));
+            animation: load-bar 2s ease-in-out infinite;
+        }
+        @keyframes load-bar { 0%{width:0%} 50%{width:80%} 100%{width:100%} }
+
+        #sqlInstructions {
+            display: none;
+            max-width: 90%;
+            text-align: left;
+            margin-top: 10px;
+        }
+
+        /* ─── HEADER ─── */
+        header {
+            position: relative;
+            z-index: 10;
+            padding: 0;
+            background: rgba(7,17,29,0.95);
+            border-bottom: 1px solid var(--border);
+            backdrop-filter: blur(20px);
+        }
+        .header-inner {
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 20px 20px 16px;
+            display: flex;
+            align-items: flex-end;
+            gap: 16px;
+        }
+        .header-icon {
+            font-size: 36px;
+            line-height: 1;
+            filter: drop-shadow(0 0 12px rgba(56,189,248,0.6));
+        }
+        .header-text h1 {
+            font-family: var(--font-display);
+            font-size: 32px;
+            letter-spacing: 3px;
+            color: #fff;
+            line-height: 1;
+        }
+        .header-text p {
+            font-size: 11px;
+            color: var(--muted);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-top: 3px;
+        }
+        .header-badge {
+            margin-left: auto;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--teal);
+            background: rgba(0,212,200,0.1);
+            border: 1px solid rgba(0,212,200,0.25);
+            padding: 4px 10px;
+            border-radius: 20px;
+            white-space: nowrap;
+        }
+
+        /* ─── STATUS BAR ─── */
+        #statusBar {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            padding: 12px 20px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            font-weight: 600;
+            text-align: center;
+            z-index: 999;
+            transform: translateY(100%);
+            transition: transform 0.35s cubic-bezier(0.34,1.56,0.64,1);
+            backdrop-filter: blur(20px);
+            letter-spacing: 0.5px;
+        }
+        #statusBar.show  { transform: translateY(0); }
+        #statusBar.ok    { background: rgba(0,80,40,0.95); color: #5effc0; border-top: 1px solid rgba(0,255,150,0.2); }
+        #statusBar.err   { background: rgba(100,10,10,0.95); color: #ff8888; border-top: 1px solid rgba(255,80,80,0.2); }
+        #statusBar.info  { background: rgba(10,40,80,0.95); color: var(--blue-lt); border-top: 1px solid rgba(30,144,255,0.2); }
+
+        /* ─── CONTAINER ─── */
+        .container {
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 24px 16px;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* ─── SECTION LABEL ─── */
+        .section-label {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--muted);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .section-label::before {
+            content: '';
+            display: inline-block;
+            width: 20px; height: 1px;
+            background: var(--muted);
+        }
+
+        /* ─── CARDS ─── */
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 22px 20px;
+            margin-bottom: 20px;
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.3s;
+        }
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--blue), var(--teal), transparent);
+            opacity: 0.5;
+        }
+        .card:hover { border-color: rgba(56,139,211,0.35); }
+
+        .card-title {
+            font-family: var(--font-display);
+            font-size: 20px;
+            letter-spacing: 2px;
+            color: #fff;
+            margin-bottom: 18px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .card-title .icon {
+            font-size: 18px;
+            filter: drop-shadow(0 0 6px rgba(56,189,248,0.5));
+        }
+
+        /* ─── FARM NAMES ─── */
+        .nome-fazenda-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+        .nome-field {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px 14px;
+            transition: border-color 0.3s;
+        }
+        .nome-field:focus-within {
+            border-color: rgba(30,144,255,0.5);
+        }
+        .nome-field label {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            color: var(--blue-lt);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .nome-field input {
+            background: transparent;
+            border: none;
+            color: #fff;
+            font-family: var(--font-body);
+            font-size: 14px;
+            font-weight: 500;
+            width: 100%;
+            outline: none;
+        }
+
+        /* ─── FARM SELECTOR ─── */
+        .farm-selector {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 22px;
+            background: var(--bg);
+            padding: 6px;
+            border-radius: 14px;
+            border: 1px solid var(--border);
+        }
+        .farm-btn {
+            background: transparent;
+            border: none;
+            padding: 12px 16px;
+            border-radius: 10px;
+            color: var(--muted);
+            font-family: var(--font-body);
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.25s;
+            letter-spacing: 0.3px;
+        }
+        .farm-btn.active {
+            background: linear-gradient(135deg, var(--blue) 0%, #1470cc 100%);
+            color: #fff;
+            box-shadow: 0 4px 20px rgba(30,144,255,0.3);
+        }
+
+        /* ─── INPUTS ─── */
+        .input-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .input-wrap {
+            position: relative;
+        }
+        .input-wrap label {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            color: var(--muted);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            display: block;
+            margin-bottom: 6px;
+            padding-left: 2px;
+        }
+        .input-wrap input {
+            width: 100%;
+            background: var(--bg);
+            color: #fff;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 13px 16px;
+            font-family: var(--font-mono);
+            font-size: 15px;
+            outline: none;
+            transition: border-color 0.25s, box-shadow 0.25s;
+            -webkit-appearance: none;
+        }
+        .input-wrap input:focus {
+            border-color: rgba(30,144,255,0.6);
+            box-shadow: 0 0 0 3px rgba(30,144,255,0.1);
+        }
+
+        /* ─── MAIN BUTTON ─── */
+        .btn-main {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #1a7ee0 0%, #0f5bab 50%, #1a7ee0 100%);
+            background-size: 200% 100%;
+            color: #fff;
+            font-family: var(--font-display);
+            font-size: 18px;
+            letter-spacing: 3px;
+            border: none;
+            border-radius: 14px;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            transition: background-position 0.4s, transform 0.15s, box-shadow 0.3s;
+            box-shadow: 0 4px 24px rgba(30,144,255,0.25);
+            margin-bottom: 14px;
+        }
+        .btn-main::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, transparent 40%, rgba(255,255,255,0.08) 60%, transparent 70%);
+            transform: translateX(-100%);
+            transition: transform 0.5s;
+        }
+        .btn-main:hover::after { transform: translateX(100%); }
+        .btn-main:hover {
+            background-position: 100% 0;
+            box-shadow: 0 6px 32px rgba(30,144,255,0.45);
+            transform: translateY(-1px);
+        }
+        .btn-main:active { transform: translateY(0); }
+        .btn-main:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+        /* ─── ACTION BUTTONS ─── */
+        .btn-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 8px;
+        }
+        .btn-action {
+            padding: 11px 8px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+        }
+        .btn-action:hover { background: var(--bg3); border-color: rgba(56,139,211,0.4); }
+        .btn-action.export  { color: var(--blue-lt); }
+        .btn-action.import  { color: var(--teal); }
+        .btn-action.danger  { color: var(--danger); }
+
+        /* ─── STATS ROW ─── */
+        .stats-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+        .stat-box {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 16px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .stat-box::before {
+            content: '';
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            height: 2px;
+        }
+        .stat-box:first-child::before { background: linear-gradient(90deg, var(--blue), var(--teal)); }
+        .stat-box:last-child::before  { background: linear-gradient(90deg, var(--gold), #e0a020); }
+        .stat-label {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            color: var(--muted);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            display: block;
+            margin-bottom: 8px;
+        }
+        .stat-value {
+            font-family: var(--font-display);
+            font-size: 36px;
+            letter-spacing: 1px;
+            line-height: 1;
+        }
+        .stat-box:first-child .stat-value { color: var(--blue-lt); }
+        .stat-box:last-child  .stat-value { color: var(--gold); }
+        .stat-unit {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        /* ─── CHART CONTAINERS ─── */
+        .chart-wrap {
+            position: relative;
+            height: 220px;
+            margin-top: 6px;
+        }
+
+        /* ─── YEAR SELECT ─── */
+        .year-select {
+            width: 100%;
+            background: var(--bg);
+            color: #fff;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px 16px;
+            font-family: var(--font-mono);
+            font-size: 13px;
+            outline: none;
+            cursor: pointer;
+            margin-bottom: 16px;
+            transition: border-color 0.25s;
+        }
+        .year-select:focus { border-color: rgba(30,144,255,0.5); }
+        .year-select option { background: var(--bg2); }
+
+        /* ─── REGISTROS LIST ─── */
+        .registros-lista {
+            max-height: 230px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--bg3) transparent;
+        }
+        .registros-lista::-webkit-scrollbar { width: 4px; }
+        .registros-lista::-webkit-scrollbar-track { background: transparent; }
+        .registros-lista::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 4px; }
+
+        .reg-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            border-radius: 10px;
+            margin-bottom: 6px;
+            background: var(--bg);
+            border: 1px solid transparent;
+            transition: border-color 0.2s;
+        }
+        .reg-item:hover { border-color: var(--border); }
+        .reg-num {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            color: var(--muted);
+            min-width: 18px;
+            text-align: right;
+        }
+        .reg-data {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--muted);
+            flex: 1;
+        }
+        .reg-val {
+            font-family: var(--font-display);
+            font-size: 18px;
+            letter-spacing: 1px;
+            color: var(--rain);
+        }
+        .reg-unit {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            color: var(--muted);
+        }
+        .del-btn {
+            background: rgba(224,90,90,0.1);
+            border: 1px solid rgba(224,90,90,0.2);
+            color: var(--danger);
+            border-radius: 8px;
+            padding: 4px 10px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+        .del-btn:hover {
+            background: rgba(224,90,90,0.2);
+            border-color: rgba(224,90,90,0.5);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 30px;
+            color: var(--muted);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            letter-spacing: 1px;
+        }
+        .empty-state .big { font-size: 30px; display: block; margin-bottom: 8px; }
+
+        /* ─── DIVIDER ─── */
+        .divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--border), transparent);
+            margin: 18px 0;
+        }
+
+        /* ─── FOOTER ─── */
+        footer {
+            text-align: center;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--muted);
+            letter-spacing: 2px;
+            margin-top: 30px;
+            opacity: 0.6;
+        }
+
+        /* ─── ANIMATIONS ─── */
+        .card {
+            animation: fade-up 0.5s ease both;
+        }
+        .card:nth-child(1) { animation-delay: 0.05s; }
+        .card:nth-child(2) { animation-delay: 0.10s; }
+        .card:nth-child(3) { animation-delay: 0.15s; }
+        .card:nth-child(4) { animation-delay: 0.20s; }
+        .card:nth-child(5) { animation-delay: 0.25s; }
+        @keyframes fade-up {
+            from { opacity: 0; transform: translateY(16px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ─── SQL INSTRUCTIONS BOX ─── */
+        .sql-box {
+            background: var(--bg);
+            border: 1px solid #2a5a2a;
+            border-radius: 12px;
+            padding: 14px;
+            font-size: 11px;
+            color: #aaffaa;
+            white-space: pre-wrap;
+            font-family: var(--font-mono);
+            margin-top: 12px;
+            overflow-x: auto;
+        }
+
+        /* ─── RESPONSIVE ─── */
+        @media (max-width: 480px) {
+            .header-text h1 { font-size: 24px; }
+            .header-badge { display: none; }
+            .nome-fazenda-group { grid-template-columns: 1fr; }
+            .input-row { grid-template-columns: 1fr; }
+            .stat-value { font-size: 28px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- RAIN CANVAS -->
+<canvas class="rain-canvas" id="rainCanvas"></canvas>
+
+<!-- SPLASH -->
+<div id="splash">
+    <div class="splash-logo">🌧 PLUVIÔMETRO</div>
+    <div id="splashMsg">Conectando ao Supabase...</div>
+    <div class="splash-bar"><div class="splash-bar-inner"></div></div>
+    <div id="sqlInstructions">
+        <p style="color:#f0a060;font-size:12px;margin:0 0 8px;">⚠️ Tabelas não encontradas. Execute este SQL no Supabase → SQL Editor:</p>
+        <pre class="sql-box">CREATE TABLE unidades (
+  id SERIAL PRIMARY KEY,
+  chave TEXT UNIQUE NOT NULL,
+  nome TEXT NOT NULL,
+  criado_em TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE registros (
+  id SERIAL PRIMARY KEY,
+  unidade_id INTEGER REFERENCES unidades(id),
+  data DATE NOT NULL,
+  valor_mm NUMERIC(6,1) NOT NULL CHECK (valor_mm >= 0),
+  criado_em TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(unidade_id, data)
+);
+
+INSERT INTO unidades (chave, nome) VALUES
+  ('fazenda1', 'Fazenda 1'),
+  ('fazenda2', 'Fazenda 2');
+
+ALTER TABLE unidades ENABLE ROW LEVEL SECURITY;
+ALTER TABLE registros ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "pub" ON unidades FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "pub" ON registros FOR ALL USING (true) WITH CHECK (true);</pre>
+        <p style="color:#5a7a96;font-size:11px;margin-top:8px;">Após executar, recarregue a página.</p>
+    </div>
+</div>
+
+<div id="statusBar"></div>
+
+<!-- HEADER -->
+<header>
+    <div class="header-inner">
+        <div class="header-icon">🌦</div>
+        <div class="header-text">
+            <h1>PLUVIÔMETRO</h1>
+            <p>Sistema de monitoramento agrícola</p>
+        </div>
+        <div class="header-badge" id="conexaoBadge">● CONECTANDO</div>
+    </div>
+</header>
+
+<div class="container">
+
+    <!-- REGISTRO -->
+    <div class="section-label">Lançamento de Dados</div>
+    <div class="card">
+        <div class="card-title">
+            <span class="icon">📍</span> UNIDADES DE MEDIÇÃO
+        </div>
+
+        <div class="nome-fazenda-group">
+            <div class="nome-field">
+                <label>Nome da Unidade 1</label>
+                <input type="text" id="nomeFazenda1" placeholder="Fazenda 1">
+            </div>
+            <div class="nome-field">
+                <label>Nome da Unidade 2</label>
+                <input type="text" id="nomeFazenda2" placeholder="Fazenda 2">
+            </div>
+        </div>
+
+        <div class="farm-selector">
+            <button class="farm-btn active" id="btnFarm1" onclick="mudarFazenda('fazenda1')">Fazenda 1</button>
+            <button class="farm-btn"        id="btnFarm2" onclick="mudarFazenda('fazenda2')">Fazenda 2</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="input-row">
+            <div class="input-wrap">
+                <label>Data do Registro</label>
+                <input type="date" id="dataChuva">
+            </div>
+            <div class="input-wrap">
+                <label>Precipitação (mm)</label>
+                <input type="number" id="valorChuva" placeholder="0.0" step="0.1" min="0">
+            </div>
+        </div>
+
+        <button class="btn-main" id="btnSalvar" onclick="lancar()">💾 SALVAR REGISTRO</button>
+
+        <div class="btn-row">
+            <button class="btn-action export" onclick="exportarDados()">📥 Exportar</button>
+            <button class="btn-action import" onclick="document.getElementById('fileIn').click()">📤 Importar</button>
+            <button class="btn-action danger"  onclick="limparTudo()">🗑 Limpar</button>
+        </div>
+        <input type="file" id="fileIn" style="display:none" accept=".json" onchange="importarDados(this.files[0])">
+    </div>
+
+    <!-- REGISTROS RECENTES -->
+    <div class="section-label">Histórico</div>
+    <div class="card">
+        <div class="card-title">
+            <span class="icon">📋</span> REGISTROS RECENTES — <span id="labelUnidade" style="color:var(--blue-lt)">Fazenda 1</span>
+        </div>
+        <div class="registros-lista" id="registrosLista">
+            <div class="empty-state"><span class="big">🌧</span>Carregando registros...</div>
+        </div>
+    </div>
+
+    <!-- DIÁRIO -->
+    <div class="section-label">Análise do Mês Atual</div>
+    <div class="card">
+        <div class="card-title"><span class="icon">📈</span> EVOLUÇÃO DIÁRIA</div>
+        <div class="stats-row">
+            <div class="stat-box">
+                <span class="stat-label">Total Acumulado</span>
+                <span class="stat-value" id="totalMes">—</span>
+                <span class="stat-unit">mm</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-label">Maior Evento</span>
+                <span class="stat-value" id="picoMes">—</span>
+                <span class="stat-unit">mm</span>
+            </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chartDiario"></canvas></div>
+    </div>
+
+    <!-- MENSAL -->
+    <div class="section-label">Acumulado Anual</div>
+    <div class="card">
+        <div class="card-title"><span class="icon">📅</span> ACUMULADO POR MÊS</div>
+        <div class="chart-wrap"><canvas id="chartMensal"></canvas></div>
+    </div>
+
+    <!-- COMPARATIVO -->
+    <div class="section-label">Comparativo</div>
+    <div class="card">
+        <div class="card-title"><span class="icon">📊</span> COMPARATIVO ENTRE ÁREAS</div>
+        <select class="year-select" id="anoSelect" onchange="atualizarUI()"></select>
+        <div class="chart-wrap"><canvas id="chartComp"></canvas></div>
+    </div>
+
+    <footer>João Divino Barbosa &nbsp;·&nbsp; Pluviômetro Pro &nbsp;·&nbsp; © 2026</footer>
+</div>
+
+<script>
+// ─── RAIN CANVAS ANIMATION ────────────────────────────────────
+(function() {
+    const canvas = document.getElementById('rainCanvas');
+    const ctx = canvas.getContext('2d');
+    let drops = [];
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.addEventListener('resize', resize); resize();
+    for (let i = 0; i < 60; i++) drops.push({ x: Math.random()*window.innerWidth, y: Math.random()*window.innerHeight, len: 10+Math.random()*20, speed: 2+Math.random()*4, opacity: 0.3+Math.random()*0.7 });
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drops.forEach(d => {
+            ctx.beginPath();
+            ctx.moveTo(d.x, d.y); ctx.lineTo(d.x - 1, d.y + d.len);
+            ctx.strokeStyle = `rgba(56,189,248,${d.opacity})`;
+            ctx.lineWidth = 0.5; ctx.stroke();
+            d.y += d.speed;
+            if (d.y > canvas.height) { d.y = -d.len; d.x = Math.random()*canvas.width; }
+        });
+        requestAnimationFrame(draw);
+    }
+    draw();
+})();
+
+// ─── SUPABASE ────────────────────────────────────────────────
+const SUPABASE_URL = 'https://hcxabapsobefdrzfpjdf.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhjeGFiYXBzb2JlZmRyemZwamRmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MzIwOTAsImV4cCI6MjA5MDUwODA5MH0.BR_X5yfdBxpQxfPnT8Y8hkz1ijeslcxWPB0fuM28hK8';
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+Chart.register(ChartDataLabels);
+let currentFarm = 'fazenda1';
+let charts = {};
+let unidades = {};
+
+// ─── STATUS ──────────────────────────────────────────────────
+function showStatus(msg, tipo = 'ok', ms = 3000) {
+    const bar = document.getElementById('statusBar');
+    bar.textContent = msg;
+    bar.className = `show ${tipo}`;
+    clearTimeout(bar._t);
+    bar._t = setTimeout(() => bar.className = '', ms);
+}
+
+// ─── INIT ────────────────────────────────────────────────────
+window.onload = async () => {
+    document.getElementById('dataChuva').valueAsDate = new Date();
+    povoarAnos();
+    try {
+        document.getElementById('splashMsg').textContent = 'Verificando banco de dados...';
+        const { error } = await db.from('unidades').select('id').limit(1);
+        if (error && (error.code === '42P01' || error.message.includes('does not exist'))) {
+            document.getElementById('sqlInstructions').style.display = 'block';
+            document.getElementById('splashMsg').textContent = '⚠️ Tabelas não encontradas!';
+            return;
+        }
+        if (error) throw error;
+        document.getElementById('splashMsg').textContent = 'Carregando unidades...';
+        await carregarUnidades();
+        document.getElementById('splashMsg').textContent = 'Carregando gráficos...';
+        await atualizarUI();
+        document.getElementById('splash').style.display = 'none';
+        document.getElementById('conexaoBadge').textContent = '● CONECTADO';
+        document.getElementById('conexaoBadge').style.color = 'var(--teal)';
+        document.getElementById('conexaoBadge').style.background = 'rgba(0,212,200,0.1)';
+        document.getElementById('conexaoBadge').style.borderColor = 'rgba(0,212,200,0.25)';
+        showStatus('✅ Conectado ao Supabase!', 'ok');
+    } catch(e) {
+        document.getElementById('splashMsg').textContent = '❌ ' + e.message;
+        console.error(e);
+    }
+    ['nomeFazenda1','nomeFazenda2'].forEach(id => {
+        document.getElementById(id).addEventListener('change', salvarNome);
+    });
+};
+
+// ─── UNIDADES ────────────────────────────────────────────────
+async function carregarUnidades() {
+    const { data, error } = await db.from('unidades').select('*');
+    if (error) throw error;
+    data.forEach(u => { unidades[u.chave] = u; });
+    document.getElementById('nomeFazenda1').value = unidades['fazenda1']?.nome || 'Fazenda 1';
+    document.getElementById('nomeFazenda2').value = unidades['fazenda2']?.nome || 'Fazenda 2';
+    document.getElementById('btnFarm1').textContent = unidades['fazenda1']?.nome || 'Fazenda 1';
+    document.getElementById('btnFarm2').textContent = unidades['fazenda2']?.nome || 'Fazenda 2';
+    document.getElementById('labelUnidade').textContent = unidades[currentFarm]?.nome || currentFarm;
+}
+
+async function salvarNome() {
+    const n1 = document.getElementById('nomeFazenda1').value || 'Fazenda 1';
+    const n2 = document.getElementById('nomeFazenda2').value || 'Fazenda 2';
+    await Promise.all([
+        db.from('unidades').update({ nome: n1 }).eq('chave', 'fazenda1'),
+        db.from('unidades').update({ nome: n2 }).eq('chave', 'fazenda2')
+    ]);
+    await carregarUnidades();
+    await atualizarUI();
+    showStatus('✅ Nomes salvos!', 'ok');
+}
+
+function mudarFazenda(f) {
+    currentFarm = f;
+    document.getElementById('btnFarm1').classList.toggle('active', f === 'fazenda1');
+    document.getElementById('btnFarm2').classList.toggle('active', f === 'fazenda2');
+    document.getElementById('labelUnidade').textContent = unidades[f]?.nome || f;
+    atualizarUI();
+}
+
+// ─── REGISTROS ──────────────────────────────────────────────
+async function lancar() {
+    const dataInput = document.getElementById('dataChuva').value;
+    const valor = parseFloat(document.getElementById('valorChuva').value);
+    if (!dataInput || isNaN(valor) || valor < 0) { showStatus('⚠️ Preencha data e valor corretamente.', 'err'); return; }
+    const unidade_id = unidades[currentFarm]?.id;
+    if (!unidade_id) { showStatus('❌ Unidade não carregada.', 'err'); return; }
+    const btn = document.getElementById('btnSalvar');
+    btn.disabled = true; btn.textContent = '⏳ SALVANDO...';
+    const { error } = await db.from('registros').insert({ unidade_id, data: dataInput, valor_mm: valor });
+    btn.disabled = false; btn.textContent = '💾 SALVAR REGISTRO';
+    if (error) {
+        if (error.code === '23505') showStatus('⚠️ Data já registrada para esta unidade!', 'err');
+        else showStatus('❌ Erro: ' + error.message, 'err');
+        return;
+    }
+    document.getElementById('valorChuva').value = '';
+    showStatus('✅ Registro salvo com sucesso!', 'ok');
+    await atualizarUI();
+}
+
+async function deletarRegistro(id) {
+    if (!confirm('Remover este registro?')) return;
+    const { error } = await db.from('registros').delete().eq('id', id);
+    if (error) { showStatus('❌ ' + error.message, 'err'); return; }
+    showStatus('🗑 Registro removido.', 'info');
+    await atualizarUI();
+}
+
+// ─── ATUALIZAR UI ────────────────────────────────────────────
+async function atualizarUI() {
+    const anoSel = parseInt(document.getElementById('anoSelect').value) || new Date().getFullYear();
+    const hoje   = new Date();
+    const mAtual = hoje.getMonth();
+    const aAtual = hoje.getFullYear();
+
+    const { data: regsAno, error: e1 } = await db
+        .from('registros').select('*, unidades(chave)')
+        .gte('data', `${anoSel}-01-01`).lte('data', `${anoSel}-12-31`);
+    if (e1) { showStatus('❌ ' + e1.message, 'err'); return; }
+
+    const dadosF1 = (regsAno||[]).filter(r => r.unidades?.chave === 'fazenda1');
+    const dadosF2 = (regsAno||[]).filter(r => r.unidades?.chave === 'fazenda2');
+    const dadosAtuais = currentFarm === 'fazenda1' ? dadosF1 : dadosF2;
+
+    // ── Registros recentes ──
+    const recentes = [...dadosAtuais].sort((a,b) => b.data.localeCompare(a.data)).slice(0,15);
+    const lista = document.getElementById('registrosLista');
+    lista.innerHTML = recentes.length === 0
+        ? '<div class="empty-state"><span class="big">🌦</span>Nenhum registro ainda.</div>'
+        : recentes.map((r, i) => `
+            <div class="reg-item">
+                <span class="reg-num">${String(i+1).padStart(2,'0')}</span>
+                <span class="reg-data">${fmtData(r.data)}</span>
+                <span class="reg-val">${parseFloat(r.valor_mm).toFixed(1)}</span>
+                <span class="reg-unit">mm</span>
+                <button class="del-btn" onclick="deletarRegistro(${r.id})">✕</button>
+            </div>`).join('');
+
+    // ── Diário ──
+    const diasNoMes = new Date(aAtual, mAtual+1, 0).getDate();
+    const { data: regsMes } = await db.from('registros').select('data, valor_mm, unidades(chave)')
+        .gte('data', `${aAtual}-${pad(mAtual+1)}-01`)
+        .lte('data', `${aAtual}-${pad(mAtual+1)}-${pad(diasNoMes)}`);
+
+    const valDias = Array(diasNoMes).fill(0);
+    let totalM = 0, picoM = 0;
+    (regsMes||[]).filter(r => r.unidades?.chave === currentFarm).forEach(d => {
+        const idx = parseInt(d.data.split('-')[2]) - 1;
+        valDias[idx] += parseFloat(d.valor_mm);
+        totalM += parseFloat(d.valor_mm);
+        if (parseFloat(d.valor_mm) > picoM) picoM = parseFloat(d.valor_mm);
+    });
+    document.getElementById('totalMes').innerText = totalM.toFixed(1);
+    document.getElementById('picoMes').innerText  = picoM.toFixed(1);
+
+    renderChart('chartDiario', 'bar', Array.from({length:diasNoMes},(_,i)=>i+1), [{
+        label: 'mm', data: valDias,
+        backgroundColor: valDias.map(v => v > 0 ? 'rgba(56,189,248,0.7)' : 'rgba(56,189,248,0.1)'),
+        borderColor: 'rgba(56,189,248,0.9)',
+        borderWidth: 1, borderRadius: 4
+    }]);
+
+    // ── Mensal ──
+    const meses = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    const pAnual = lista => {
+        const m = Array(12).fill(0); let tot = 0;
+        lista.forEach(d => { const i = parseInt(d.data.split('-')[1])-1; m[i]+=parseFloat(d.valor_mm); tot+=parseFloat(d.valor_mm); });
+        return { m, tot };
+    };
+    const rF1 = pAnual(dadosF1), rF2 = pAnual(dadosF2);
+    const dadosMensal = currentFarm === 'fazenda1' ? rF1.m : rF2.m;
+    renderChart('chartMensal', 'bar', meses, [{
+        label: 'mm', data: dadosMensal,
+        backgroundColor: 'rgba(30,144,255,0.5)',
+        borderColor: 'rgba(30,144,255,0.9)',
+        borderWidth: 1, borderRadius: 6
+    }]);
+
+    // ── Comparativo ──
+    const nF1 = unidades['fazenda1']?.nome || 'Fazenda 1';
+    const nF2 = unidades['fazenda2']?.nome || 'Fazenda 2';
+    renderChart('chartComp', 'line', meses, [
+        { label: `${nF1}: ${rF1.tot.toFixed(0)} mm`, data: rF1.m, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.1)', borderWidth: 2, tension: 0.3, fill: true, pointBackgroundColor: '#38bdf8', pointRadius: 4 },
+        { label: `${nF2}: ${rF2.tot.toFixed(0)} mm`, data: rF2.m, borderColor: '#f0c040', backgroundColor: 'rgba(240,192,64,0.1)',  borderWidth: 2, tension: 0.3, fill: true, pointBackgroundColor: '#f0c040', pointRadius: 4 }
+    ]);
+}
+
+// ─── HELPERS ─────────────────────────────────────────────────
+const fmtData = iso => { const [y,m,d]=iso.split('-'); return `${d}/${m}/${y}`; };
+const pad = n => String(n).padStart(2,'0');
+
+function renderChart(id, type, labels, datasets) {
+    if (charts[id]) charts[id].destroy();
+    const ctx = document.getElementById(id).getContext('2d');
+    charts[id] = new Chart(ctx, {
+        type, data: { labels, datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            layout: { padding: { top: 22 } },
+            plugins: {
+                legend: {
+                    display: id === 'chartComp',
+                    labels: { color: '#9ab8d4', font: { family: "'DM Sans'", weight: '500', size: 12 }, boxWidth: 12, boxHeight: 12, borderRadius: 3, useBorderRadius: true }
+                },
+                datalabels: {
+                    anchor: 'end', align: 'top',
+                    color: 'rgba(212,232,248,0.7)',
+                    font: { family: "'JetBrains Mono'", size: 9, weight: '600' },
+                    formatter: v => v > 0 ? v.toFixed(0) : '',
+                    clip: false
+                }
+            },
+            scales: {
+                y: {
+                    grace: '12%',
+                    ticks: { color: '#4a6a82', font: { family: "'JetBrains Mono'", size: 9 } },
+                    grid: { color: 'rgba(56,139,211,0.08)', drawBorder: false }
+                },
+                x: {
+                    ticks: { color: '#4a6a82', font: { family: "'JetBrains Mono'", size: 9 } },
+                    grid: { display: false }
+                }
+            }
+        }
+    });
+}
+
+function povoarAnos() {
+    const s = document.getElementById('anoSelect'); s.innerHTML = '';
+    const a = new Date().getFullYear();
+    for (let i = a; i >= a-3; i--) {
+        const o = document.createElement('option');
+        o.value = i; o.text = `DADOS DE ${i}`; s.appendChild(o);
+    }
+}
+
+// ─── EXPORTAR / IMPORTAR ─────────────────────────────────────
+async function exportarDados() {
+    showStatus('⏳ Exportando...', 'info', 8000);
+    const { data: regs } = await db.from('registros').select('*, unidades(chave)');
+    const backup = {
+        f1: JSON.stringify((regs||[]).filter(r=>r.unidades?.chave==='fazenda1').map(r=>({data:r.data,valor:r.valor_mm}))),
+        f2: JSON.stringify((regs||[]).filter(r=>r.unidades?.chave==='fazenda2').map(r=>({data:r.data,valor:r.valor_mm}))),
+        nomes: { f1: unidades['fazenda1']?.nome, f2: unidades['fazenda2']?.nome }
+    };
+    const blob = new Blob([JSON.stringify(backup,null,2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `pluviometro_backup_${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    showStatus('✅ Exportado com sucesso!', 'ok');
+}
+
+async function importarDados(file) {
+    if (!file) return;
+    try {
+        const text = await file.text();
+        const backup = JSON.parse(text);
+        const regsF1 = JSON.parse(backup.f1||'[]');
+        const regsF2 = JSON.parse(backup.f2||'[]');
+        const idF1 = unidades['fazenda1']?.id;
+        const idF2 = unidades['fazenda2']?.id;
+        let count = 0;
+        for (const r of regsF1) {
+            const { error } = await db.from('registros').insert({ unidade_id: idF1, data: r.data, valor_mm: r.valor });
+            if (!error) count++;
+        }
+        for (const r of regsF2) {
+            const { error } = await db.from('registros').insert({ unidade_id: idF2, data: r.data, valor_mm: r.valor });
+            if (!error) count++;
+        }
+        showStatus(`✅ ${count} registros importados!`, 'ok');
+        await atualizarUI();
+    } catch(e) {
+        showStatus('❌ Erro ao importar: ' + e.message, 'err');
+    }
+}
+
+async function limparTudo() {
+    if (!confirm('⚠️ ATENÇÃO: Isso irá remover TODOS os registros permanentemente. Continuar?')) return;
+    const ids = [unidades['fazenda1']?.id, unidades['fazenda2']?.id].filter(Boolean);
+    const { error } = await db.from('registros').delete().in('unidade_id', ids);
+    if (error) { showStatus('❌ ' + error.message, 'err'); return; }
+    showStatus('🗑 Todos os registros foram removidos.', 'info');
+    await atualizarUI();
+
+}
+</script>
+
+</script>
+</body>
+</html>
